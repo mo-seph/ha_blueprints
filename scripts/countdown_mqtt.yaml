@@ -1,0 +1,128 @@
+blueprint:
+  name: MQTT Timed Countdown Test
+  description: >-
+    Countdown timer for a given number of seconds, using MQTT to talk to a WLED
+    strip
+  domain: script
+  input:
+    dev_name:
+      description: The name of the device to show the countdown timer on
+      selector:
+        select:
+          options:
+            - living_room_floor
+            - living_room_beam
+            - study
+            - frosted_hemisphere
+          custom_value: true
+    start_point:
+      description: The starting LED of the countdown bar
+      default: 10
+      selector:
+        number:
+          min: 00
+          max: 600
+    end_point:
+      description: The ending LED of the countdown bar
+      default: 100
+      selector:
+        number:
+          min: 10
+          max: 600
+    duration:
+      description: How long the countdown lasts in minutes
+      default: 5
+      selector:
+        number:
+          min: 1.0
+          max: 60.0
+    bar_colour:
+      description: Colour of the countdown bar
+      default: [0,255,255]
+      selector:
+        color_rgb:
+    bg_colour:
+      description: Background colour for the countdown
+      default: [50,0,0]
+      selector:
+        color_rgb:
+    refresh_interval:
+      description: How many seconds between updates; more is smoother, but takes more messages
+      default: 1
+      selector:
+        number:
+          min: 0.2
+          max: 5
+          step: 0.2
+    ending_time:
+      description: How long to show the end animation for
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+    ending_animation:
+      description: ID of the FX preset to use for the end animation
+      default: 87
+      selector:
+        number:
+          min: 1
+          max: 254
+          step: 1
+mode: restart
+sequence:
+  - variables:
+      start: "{{ now().timestamp() }}"
+      duration: !input duration
+      seg_id: 1
+      finish_time: !input ending_time
+      finish_fx: 87
+      device_name: !input dev_name
+      start_led: !input start_point
+      end_led: !input end_point
+      bar_col: !input bar_colour
+      bg_col: !input bg_colour
+      update_interval: !input refresh_interval # or we could do Seconds per LED = start-end / duration * 60; half it for smoothness; make sure it's not less that 500ms
+  - action: mqtt.publish
+    data:
+      topic: wled/{{device_name}}/api
+      payload: >-
+        {"seg":[
+          {"id":0,"frz":true},
+          {"id":{{seg_id}},"frz":false,"on":true,
+          "fx":98,"ix":30,
+          "col":[{{bar_col}},{{bg_col}}],
+          "start":{{start_led}},"stop":{{end_led}}}
+        ]}
+  - repeat:
+      until:
+        - condition: template
+          value_template: "{{ now().timestamp() >= (start + duration * 60.0) }}"
+      sequence:
+        - action: mqtt.publish
+          continue_on_error: true
+          data:
+            topic: wled/{{device_name}}/api
+            payload: >-
+              {"seg":[{"id":{{seg_id}},"fx":98,
+              "tt":20,
+              "ix":{{ (100 * (now().timestamp() - start) / (duration*60))|int }}}]}
+        - delay:
+            milliseconds: "{{update_interval * 1000}}"
+  - action: mqtt.publish
+    data:
+      topic: wled/{{device_name}}/api
+      payload: "{\"seg\":[{\"id\":{{seg_id}},\"fx\":{{finish_fx}}}]}"
+  - delay:
+      seconds: "{{finish_time}}"
+  - action: mqtt.publish
+    data:
+      topic: wled/{{device_name}}/api
+      payload: "{\"seg\":[{\"id\":{{seg_id}},\"fx\":98,\"ix\":0}]}\""
+  - action: mqtt.publish
+    data:
+      topic: wled/{{device_name}}/api
+      payload: >-
+        {"seg":[{"id":0,"frz":false},{"id":{{seg_id}},"on":false,"start":0,"stop":0}]}
+
